@@ -1,13 +1,13 @@
 
-CC = cl
-CFLAGS = -c /D "WIN32" 
+CC = gcc
+CFLAGS = -c -DWIN32  -lwsock32 
 
 all: server.exe
 server.exe: server.obj HttpSocket.obj Socket.obj error.obj SocketStream.obj
-	link server.obj HttpSocket.obj Socket.obj error.obj SocketStream.obj   "kernel32.lib" "user32.lib" "gdi32.lib" "winspool.lib" "comdlg32.lib" "advapi32.lib" "shell32.lib" "ole32.lib" "oleaut32.lib" "uuid.lib" "odbc32.lib" "odbccp32.lib
-
+	link -lwsock32 server.obj HttpSocket.obj Socket.obj error.obj SocketStream.obj   "kernel32.lib" "user32.lib" "gdi32.lib" "winspool.lib" "comdlg32.lib" "advapi32.lib" "shell32.lib" "ole32.lib" "oleaut32.lib" "uuid.lib" "odbc32.lib" "odbccp32.lib" -lwsock32 
 server.obj: server.cpp HttpSocket.h
 	$(CC) $(CFLAGS) server.cpp 
+	$(warning "$(CC) $(CFLAGS) server.cpp")
 Socket.obj: Socket.cpp Socket.h package.h SocketStream.h error.h
 	$(CC) $(CFLAGS) Socket.cpp
 HttpSocket.obj: HttpSocket.h HttpSocket.cpp 

@@ -41,6 +41,12 @@ CW_BEGIN
 
 
 using std::string;
+typedef struct tcp_keepalive
+{
+	u_long onoff;
+	u_long keepalivetime;
+	u_long keepaliveinterval;
+}TCP_KEEPALIVE,*PTCP_KEEPALIVE;
 /* Socket is class to handle socket,can't copy publicly.
  * With the action connect,close,and server action bind,
  * listen and accept.
@@ -48,6 +54,8 @@ using std::string;
  * cross linux and windows platform.*/
 class Socket{
 public:
+
+	unsigned short Port=0;
 	explicit Socket(SOCKET sk=-1);
 	Socket(int af,int type,int protocol=0);
 	virtual	~Socket();
@@ -58,11 +66,16 @@ public:
 	//Socket accept(struct sockaddr_in* cliAddr=0);
 	void accept(Socket& SK,struct sockaddr_in* cliAddr=0);
 	void close();
-
+	int getSocket(){return m_socket;}
 	/* Socket i/o stream */
 	SocketStream getSocketStream();
+	std::string Address;
+	SOCKET Accept();
+	static int checkPort(unsigned short port);
 protected:
 	void create(int af,int type,int protocol=0);
+	void setKeepAlive();
+	void setRcvBuf();
 	/* accept return a Socket Object,so we make the copy constructor
 	 * as private,and also disallow the operator= used public*/
 	Socket(const Socket& SK){m_socket=SK.m_socket;}

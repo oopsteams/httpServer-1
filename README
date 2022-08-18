@@ -1,37 +1,25 @@
-This Project is under construction...
-I want to implement a simple,multithread and cross platform(for now just linux and windows) http Server.
-The source code worked in a namespace called CHAOSWORK_NAMESPACE,shorten for cw.
-Special thanks for ptypes lib.I learned a lot from it to write a lib.
-================================
-Target:
-1.Exception Safety
-2.Thread Safety
-3.Memery pool and thread pool
-================================
-patch details:
+
+C:\data\c++\httpServer-1\build\render.exe -vsync 1 -v debug -f image2 -y -r 20 -i "C:\data\c++\httpServer-1\build\data\F23\file.txt" -vcodec libx264 -preset medium -pix_fmt yuv420p -crf 28 -t 1 -strict -2 "C:\data\c++\httpServer-1\build\out\F23\section_0_1.mp4"
+
+C:\data\c++\httpServer-1\build\render.exe -vsync 1 -v debug -f image2 -y -r 20 -i "C:\data\c++\httpServer-1\build\data\F23\s2_img_%05d.jpeg" -vcodec libx264 -preset medium -pix_fmt yuv420p -crf 28 -t 1 -strict -2 "C:\data\c++\httpServer-1\build\out\F23\section_0_1.mp4"
+
+C:\data\c++\httpServer-1\build\render.exe -vsync 1 -v debug -f concat -safe 0 -i "C:\data\c++\httpServer-1\build\out\F23\concat.txt" -c copy "C:\data\c++\httpServer-1\build\out\F23\common_0.mp4"
 
 
--------------------------------
-2012-03-31 20:23:15
-1.passed test in windows,so now it was a really cross platform:)
-2.still no thread
-3.Only send a string "Hello world!Just a Web Server test:)"
-4.This version may called 0.1
--------------------------------
-2012-03-30 01:53:02
-1.update the SocketStream class,reference to cs:app Rio_I/O
-2.there is still a close socket bug when use fork,for now just
-always close the socket in the destructor.
-3.Do implement a simple static web server on linux:)
+print
 
--------------------------------
-2012-03-29 00:51:52
-1.add HttpSocket
-2.Server read has a bug//fixed
-3.using fork,should be thread.
---------------------------------
-2012-03-25 16:22:53
-1.handle the throw errors.
-2.Exception Safety Socket with basic actions:create,connect,bind,listen,accept and close.
+1、调用OpenPrinter()打开打印机，获取打印机句柄。
 
+2、初始化DOCINFO打印机结构体。
 
+3、调用StartDocPrinter()表明应用程序准备发送文档数据给打印机。
+
+4、调用StartPagePrinter()表明程序准备发送一个新的打印页给打印机。
+
+5、调用WritePrinter()发送原始数据给打印机。
+
+6、调用EndpagePrinter()表明打印页发送完毕。
+
+7、调用EndDocPrinter()表明文档发送完毕。
+
+8、调用ClosePrinter()关闭打印机，释放资源。

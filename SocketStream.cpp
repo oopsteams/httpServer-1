@@ -1,7 +1,18 @@
 #include    "SocketStream.h"
+#include    "Socket.h"
+#include  <stdio.h>
 CW_BEGIN
 
-
+int SocketStream::Receive(char* outBuf, size_t recvLen, int flags)
+{
+	int nread;
+#ifdef WIN32
+	nread = ::recv(handle,outBuf,recvLen,0);
+#else
+	nread = ::read(handle,outBuf,recvLen);
+#endif
+	return nread;
+}
 
 int SocketStream::readn(char* usrbuf,int n)
 {
@@ -40,11 +51,11 @@ int SocketStream::readn(char* usrbuf,int n)
 //#endif
 	return n-nleft;
 }
-int SocketStream::writen(char* usrbuf,int n)
+int SocketStream::writen(const char* usrbuf,int n)
 {
 	if(handle<0) return -1;
 	int nleft=n;
-	char *bufp=usrbuf;
+	const char *bufp=usrbuf;
 /*#ifdef WIN32
 	unsigned long nwritten;
 	if(!WriteFile(HANDLE(handle),usrbuf,n,&nwritten,0))
@@ -59,8 +70,10 @@ int SocketStream::writen(char* usrbuf,int n)
 	while(nleft>0)
 	{
 #ifdef WIN32
+		
 		if((nwritten=::send(handle,bufp,nleft,0))<0)
 			throw Error("Write error");
+		//printf("writen in...userbuf:%s.n:%d\r\n", bufp, nwritten);
 #else
 		if((nwritten=::write(handle,bufp,nleft))<=0)
 		{
@@ -74,6 +87,7 @@ int SocketStream::writen(char* usrbuf,int n)
 //#endif
 	return n;
 }
+
 int SocketStream::readb(char* usrbuf,int n)
 {
 	if(handle<0) return -1;
@@ -128,6 +142,18 @@ int SocketStream::readlineb(char* usrbuf,int maxlen)
 	}
 	*bufp=0;
 	return n;
+}
+void SocketStream::close()
+{
+	//if(socketClosed) return;
+#ifdef WIN32
+	::closesocket(handle);
+	//::shutdown(handle, SD_BOTH);
+	printf("will shutdown =======>sk:%d\n", handle);
+	//printf("loop in will close =======>sk:%d.", handle);
+#else
+	::close(handle);
+#endif
 }
 CW_END
 
