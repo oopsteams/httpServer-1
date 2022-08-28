@@ -6,8 +6,8 @@
 #include "printer.h"
 #include "TimeUtils.h"
 
-#define BUF_SIZE 524288
-#define SMALL_BUF_SIZE 512
+#define BUF_SIZE 1048576
+#define SMALL_BUF_SIZE 262144
 
 using namespace std;
 
@@ -96,6 +96,43 @@ unsigned char* urldecode(unsigned char* encd,unsigned char* decd)
     decd[j] = 0;   
   
     return decd;   
+}
+string URLDecode(string& encd)
+{
+    const unsigned char *ptr = (const unsigned char *)encd.c_str();
+    size_t n = encd.length();
+    string ret;
+    int i;
+    //ret.reserve(n);
+    //for (; *ptr; ++ptr)
+    for (i=0; i<n&&*ptr; i++,++ptr)
+    {
+        if (*ptr == '%')
+        {
+            if (*(ptr + 1))
+            {
+                char a = *(ptr + 1);
+                char b = *(ptr + 2);
+                if (!((a >= 0x30 && a < 0x40) || (a >= 0x41 && a < 0x47))) continue;
+                if (!((b >= 0x30 && b < 0x40) || (b >= 0x41 && b < 0x47))) continue;
+                char buf[3];
+                buf[0] = a;
+                buf[1] = b;
+                buf[2] = 0;
+                ret += (char)strtoul(buf, NULL, 16);
+                ptr += 2;
+                continue;
+            }
+        }
+        if (*ptr == '+')
+        {
+            ret += ' ';
+            continue;
+        }
+        ret += *ptr;
+    }
+    
+    return ret;
 }
 
 bool init_open_s_share_memory()
@@ -387,13 +424,108 @@ bool processExist(DWORD pid)
 void update_printer_state(Printer *printer)
 {
     printer->updatePrinterList(TRUE);
-    const std::string json = printer->printerListJson(TRUE);
+    //const std::string json = printer->printerListJson(TRUE);
+    const std::string json = printer->printerListJsonNew(TRUE);
     write_share_memory(json);
 }
-void loop_run(Printer *printer)
+void to_print_postscript(Printer *printer, vector<String> &secs){
+    int i,j,k;
+    size_t main_secs_cnt = secs.size();
+    size_t n;
+    //printf("ps command option secs len:%d\n", main_secs_cnt);
+    if(main_secs_cnt>3){
+        string deviceName(secs[1]);
+        string psPath(secs[2]);
+        string docName(secs[3]);
+        vector<int> range_secs;
+        char * range;
+        int copies = 1;
+        bool duplex = true;
+        
+        if (main_secs_cnt>4){
+            for(i=4;i<main_secs_cnt;i++){
+                string option = secs[i];
+                //printf("ps command option option:%s\n", option.c_str());
+                n = option.length();
+                if("duplexshort" == option){
+
+                } else if("duplexlong" == option){
+
+                } else if("single" == option){
+                    
+                } else {
+                    const char * opt_chars = option.c_str();
+                    char c = *(opt_chars+n-1);
+                    if (c == 'x' || c== 'X'){
+                        String copies_str = option.substr(0, n-1);
+                        try
+                        {
+                            copies = atoi(copies_str.c_str());
+                        }
+                        catch(const std::exception& e)
+                        {
+                            printf("ps command option err:%s\n", e.what());
+                        }
+                    } else if(c == 'R'||c=='r'){
+                        
+                        String range_str = option.substr(0, n-1);
+                        vector<String> option_secs;
+                        size_t idx = range_str.find("a");
+                        if (idx>=0){
+                            range_str.Split("a", option_secs);
+                        } else {
+                            option_secs.push_back(range_str);
+                        }
+                        printf("ps command option range_str:%s\n", range_str.c_str());
+                        size_t _n = option_secs.size();
+                        for(j=0;j<_n;j++){
+                            String r_opt = option_secs[j];
+                            idx = r_opt.find("z");
+                            if(idx<0){
+                                //printf("ps command push range:%s\n", r_opt.c_str());
+                                range_secs.push_back(atoi(r_opt.c_str()));
+                            } else {
+                                size_t s = atoi(r_opt.substr(0, idx).c_str());
+                                size_t e = atoi(r_opt.substr(idx+1).c_str());
+                                for(k=s;k<=e;k++){
+                                    //printf("ps command push range:%d\n", k);
+                                    range_secs.push_back((int)k);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        /*
+        n = psPath.length();
+        string docName;
+        if(n>0){
+            const char *path_chars = psPath.c_str();
+            for(i=n-1;i>=0;i--){
+                char c = *(path_chars+i);
+                if(c == '/' || c=='\\'){
+                    if(i<n-1){
+                        docName = psPath.substr(i+1);
+                        break;
+                    }
+                }
+            }
+        }
+        */
+        printf("cprinter will call print deviceName:%s.\n=>ps path:%s.\n =>name:%s.\n=>copies:%d.\n", 
+        deviceName.c_str(), psPath.c_str(), docName.c_str(), copies);
+        //printer->printPostscript(pName, psPath, copies);
+        printer->printPostscript(deviceName, psPath, docName, range_secs);
+        
+    }
+}
+void loop_run(Printer *printer, FILE *stream)
 {
     int count = 5;
     int period = 1;
+    int i;
     DWORD char_count;
     //count 12;
     while(running)
@@ -401,14 +533,11 @@ void loop_run(Printer *printer)
         utils::TimeUtils::sleepSec(period);
         count++;
         // update one time / 5 seconds
-        if (count>5) {
+        if (count>4) {
             count = 0;
-            // printer->updatePrinterList(FALSE);
+
             update_printer_state(printer);
-            // printer->updatePrinterList(TRUE);
-            // const std::string json = printer->printerListJson(TRUE);
-            // printf("cprinter service printerListJson json len:%d.\n", json.size());
-            // write_share_memory(json);
+            fflush(stream);
         }
         string cmd = read_small_share_memory(&char_count);
         if (char_count>0) {
@@ -419,12 +548,17 @@ void loop_run(Printer *printer)
             } else if("start" == cmd){
                 //printf("cprinter service started.\n");
             } else {
-                // printf("printer receive cmd:%s.\n", cmd.c_str());
+                printf("printer receive cmd:%s.\n", cmd.c_str());
+                
+
                 vector<String> secs;
                 String s(cmd);
-                s.Split(",", secs);
+                s.Split("&", secs);
+
                 int pos=0;
 				String tag = secs[0];
+                printf("printer receive tag:%s.\n", tag.c_str());
+
 				if ("updatejob" == tag)
 				{
 					String jobIdStr = secs[1];
@@ -436,7 +570,10 @@ void loop_run(Printer *printer)
 					// printf("cprinter update job id:%d,pname:%s,state:%s.\n", jobid,pName.c_str(),tState.c_str());
 
                     update_printer_state(printer);
-				}
+				} else if("ps" == tag){
+                    to_print_postscript(printer, secs);
+                }
+/**/
 				/*
                 for (auto it = secs.begin();it!=secs.end();it++)
                 {
@@ -445,6 +582,9 @@ void loop_run(Printer *printer)
                     pos++;
                 }
 				*/
+
+                fflush(stream);
+
 				write_small_share_memory("start");
             }
         }
@@ -461,15 +601,21 @@ int main(int argc, char *argv[])
     if (argc > 1)
     {
 		char * args = argv[1];
-        // printf("args:%s.\n", args);
+        printf("args:%s.\n", args);
+        /*
 		int n = strlen(args);
 		unsigned char decd[n]={0};
 		unsigned char* param_str = (unsigned char*)(args);
 		char * ps = (char*)urldecode(param_str, decd);
         param_cmd = string(ps);
+        */
+        string encd(args);
+        param_cmd = URLDecode(encd);
+        
+        printf("param_cmd:%s.\n", param_cmd.c_str());
     }
     // printf("param_cmd:%s.\n", param_cmd.c_str());
-    DWORD param_len = param_cmd.size();
+    DWORD param_len = param_cmd.length();
     char temp[64];
     ifstream readPidFile("pid.bin", ios::in);
     if (!readPidFile){
@@ -481,6 +627,7 @@ int main(int argc, char *argv[])
     } else {
         readPidFile >> temp;
         _pid = atol(temp);
+        readPidFile.close();
         if (_pid>0) {
             bool pexist = processExist(_pid);
             if ("quit" == param_cmd && pexist){
@@ -544,9 +691,10 @@ int main(int argc, char *argv[])
     writePidFile.close();
 
 
-    std::vector<PrinterProb> printerList;
+    // std::vector<UniPrinterProb> printerList;
     std::map<std::string, std::vector<PJob>*> printerJobs;
-    Printer printer(printerJobs, printerList);
+    // std::map<std::string, UniPrinterProb> printermap;
+    Printer printer(printerJobs);
 
     // printer->updatePrinterList(TRUE);
     // std::string json = printer->printerListJson(TRUE);
@@ -557,13 +705,13 @@ int main(int argc, char *argv[])
 
     std::string basePath = Path::StartPath();
     String resultFile = basePath + "\\cpp.bin";
-    freopen(resultFile.c_str(), "w", stdout);
+    FILE *stream = freopen(resultFile.c_str(), "w", stdout);
     printf("check printer argc:%d.\n", argc);
     
     long ct = utils::TimeUtils::getCurrentTime();
-    printf("cprinter service run start at:%ld.\n", ct);
+    printf("cprinter service run start at:%lld.\n", ct);
 
-    loop_run(&printer);
+    loop_run(&printer, stream);
     CleanProcessIDByName("cprinter.exe", pid);
     // std::string json = printer.printerListJson(FALSE);
     
@@ -573,10 +721,11 @@ int main(int argc, char *argv[])
     // }
     // printerJobs.clear();
     release_share_memory();
-
-    printf("cprinter service end at:%ld.\n", utils::TimeUtils::getCurrentTime());
+    long end_at = utils::TimeUtils::getCurrentTime();
+    printf("cprinter service end at:%lld,diff:%lld.\n", end_at, end_at-ct);
     //taskkill -PID 333 -F
     printf("cprinter service quit ok.\n");
     //cprinter.exe updatejob%2C2%2CEPSON%20WF-C5290%20Series%20(%E5%89%AF%E6%9C%AC%201)%2Cresume
+    fclose(stream);
     return 0;
 }

@@ -1,3 +1,5 @@
+// #include <iostream>
+// #include <fstream>
 #include "printer.h"
 
 int preNUm(unsigned char byte) {
@@ -126,6 +128,71 @@ std::string lpwstr_to_string(const LPWSTR wstr)
     std::wstring documentName(wstr);
     return Printer::wstring_to_string(documentName);
 }
+
+DWORD GetVersion(HANDLE handle) 
+{ 
+    DWORD needed;
+    GetPrinterDriver(handle, NULL, 2, NULL, 0, &needed);
+    std::vector<char> buffer(needed);
+    return ((DRIVER_INFO_2W*) &buffer[0])->cVersion; 
+}
+
+BOOL fetchDevMode(HANDLE hprinter, LPWSTR printerName)
+{
+    DWORD devmode_size;
+    LPDEVMODEW podevmode, pidevmode;
+    devmode_size = DocumentPropertiesW(NULL, hprinter, printerName, NULL, NULL, 0);
+    
+    podevmode = (LPDEVMODEW)malloc(devmode_size);
+    if (!podevmode)
+    {
+        return FALSE;
+    }
+    ZeroMemory(podevmode, devmode_size);
+    
+    pidevmode = (LPDEVMODEW)malloc(devmode_size);
+    if (!pidevmode)
+    {
+        return FALSE;
+    }
+    DocumentPropertiesW(NULL, hprinter, printerName, podevmode, NULL, DM_OUT_BUFFER);
+    memcpy(pidevmode, podevmode, devmode_size);
+
+    pidevmode->dmFields = 0;
+
+    pidevmode->dmFields &= ~(DM_PAPERSIZE | DM_ORIENTATION | DM_COLOR | DM_PAPERLENGTH | DM_PAPERWIDTH | DM_DUPLEX);
+    pidevmode->dmFields |= DM_DEFAULTSOURCE;
+    pidevmode->dmDefaultSource = 0;
+    // DMRES_HIGH
+    // DMBIN_FORMSOURCE
+    // DMPAPER_A3 DMPAPER_A4
+
+    if (podevmode!=NULL){
+        free(podevmode);
+    }
+    return TRUE;
+}
+
+bool IsV4Driver(LPWSTR printerName)
+{ 
+    HANDLE handle; 
+    PRINTER_DEFAULTSW defaults; 
+
+    defaults.DesiredAccess = PRINTER_ACCESS_USE; 
+    defaults.pDatatype = L"RAW"; 
+    defaults.pDevMode = NULL; 
+
+    if (!OpenPrinterW(printerName, &handle, &defaults)) 
+    { 
+     return false; 
+    } 
+
+    DWORD version = GetVersion(handle); 
+
+    ClosePrinter(handle); 
+
+    return version == 4; 
+} 
 
 bool isUtf8(const char* data, int len) {
     int num = 0;
@@ -493,8 +560,14 @@ int support_color(const std::wstring& printerName, const std::string& portName)
     return DeviceCapabilitiesW(pn, pPort, DC_COLORDEVICE, NULL, NULL);
 }
 
-Printer::Printer(std::map<std::string, std::vector<PJob>*> printerJobs, std::vector<PrinterProb> printerList)
-:printerJobs(printerJobs),printerList(printerList)
+// void readFileBuff(const std::string& path, char *buff)
+// {
+
+// }
+// Printer::Printer(std::map<std::string, std::vector<PJob>*> printerJobs, std::vector<PrinterProb> printerList, std::map<std::string, PrinterProb> printermap)
+// :printerJobs(printerJobs),printermap(printermap)
+Printer::Printer(std::map<std::string, std::vector<PJob>*> printerJobs)
+:printerJobs(printerJobs)
 {
 }
 std::wstring Printer::getDefaultPrinterName() {
@@ -527,10 +600,14 @@ BOOL Printer::updateTaskList(const std::wstring& printerName, DWORD jobCount, BO
 }
 void Printer::clearCache()
 {
-    printerList.clear();
+    // printerList.clear();
+    // printermap.clear();
+    int idx = 0;
     for(auto& it : printerJobs){
         it.second->clear();
+        printf("clearCache will free vector:%d.\n", idx);
         free(it.second);
+        idx++;
     }
     printerJobs.clear();
 }
@@ -541,11 +618,13 @@ void Printer::updatePrinterList(BOOL showJobs){
     DWORD level=2;
     DWORD dwNeed;
     DWORD dwRet;
+    DWORD n;
+    // DEVMODEW devModew;
     PRINTER_INFO_2W pInfo;
     BYTE *pBuffer;
     BYTE *pTmpBuffer;
-    
-    clearCache();
+    size_t cnt = 0;
+    // clearCache();
     EnumPrintersW(PRINTER_ENUM_LOCAL, NULL, level, NULL, 0, &dwNeed, &dwRet);
     pBuffer = new BYTE[dwNeed];
     if (pBuffer == NULL){
@@ -566,166 +645,262 @@ void Printer::updatePrinterList(BOOL showJobs){
         
         for(int i=0;i<(int)dwRet;i++){
             memcpy(&pInfo,pTmpBuffer,sizeof(pInfo));
-            std::wstring spPrinterName(pInfo.pPrinterName);
+
             
+            std::wstring spPrinterName(pInfo.pPrinterName);
             std::string pName = Printer::wstring_to_string(spPrinterName);
             std::string pStatus = format_printer_status(pInfo.Status);
             DWORD jobCount = pInfo.cJobs;
             DWORD attr = pInfo.Attributes;
             
-            PrinterProb p;
-            
-            String ppn(Printer::wstring_to_string(pInfo.pPortName));
-            p.supportColor = 0;
-			
-            if (ppn.size()>0){
-                std::vector<String> pns;
-                ppn.Split(",", pns);
-                if(pns.size()>0){
-                    auto it = pns.begin();
-                    String firstPortName = *it;
-                    std::string portName(firstPortName.c_str());
-                    int support_cl = support_color(spPrinterName, portName);
-                    //printf("updatePrinterList printer:%s, firstPortName:%s,support_cl:%d\n", pName.c_str(), portName.c_str(), support_cl);
-                    
-                    p.supportColor = support_cl==1?1:0;
+            // UniPrinterProb p;
+            const char* key = pName.c_str();
+            std::map<std::string, UniPrinterProb>::iterator _iter = printermap.find(key);
+            if (_iter == printermap.end()){
+                UniPrinterProb p;
+
+                String ppn(Printer::wstring_to_string(pInfo.pPortName));
+                p.supportColor = 0;
+                p.supportDuplex = 0;
+                /**/
+                if (ppn.size()>0){
+                    parseSections.clear();
+                    ppn.Split(",", parseSections);
+                    if(parseSections.size()>0){
+                        auto it = parseSections.begin();
+                        String firstPortName = *it;
+                        std::string portName(firstPortName.c_str());
+                        printf("updatePrinterList pname:%s.\n==>portname:%s.\n", key, portName.c_str());
+                        n = portName.length();
+                        memset(p.pPort, 0, n+1);
+                        memcpy(p.pPort, portName.c_str(), n);
+                        int support_val = support_color(spPrinterName, portName);
+                        p.supportColor = support_val==1?1:0;
+                        support_val = support_duplex(spPrinterName, portName);
+                        p.supportDuplex = support_val==1?1:0;
+                    }
                 }
+                p.isLocal = printer_is_local(attr)?1:0;
+                p.isShared = printer_is_shared(attr)?1:0;
+                p.isNetwork = printer_is_network(attr)?1:0;
+
+                n = pName.size();
+                memset(p.name, 0, n+1);
+                memcpy(p.name, pName.c_str(), n);
+
+                n = pStatus.size();
+                memcpy(p.pStatus, pStatus.c_str(), n);
+                p.jobCount = jobCount;
+
+                printermap.emplace(std::pair<const std::string, UniPrinterProb>(key, p));
+            } else {
+                UniPrinterProb _p = _iter->second;
+                // p.supportColor = _p.supportColor;
+                // p.isLocal = _p.isLocal;
+                // p.isShared = _p.isShared;
+                // p.isNetwork = _p.isNetwork;
+
+                n = pStatus.size();
+                memset(_p.pStatus, 0, n+1);
+                memcpy(_p.pStatus, pStatus.c_str(), n);
+                _p.jobCount = jobCount;
             }
             
-            //printf("updatePrinterList printer attr:%ld\n", attr);
-            
-            
-            p.isLocal = printer_is_local(attr)?1:0;
-            p.isShared = printer_is_shared(attr)?1:0;
-            p.isNetwork = printer_is_network(attr)?1:0;
-            
             // p.name = pName;
-            DWORD n = pName.size();
-            memset(p.name, 0, n+1);
-            memcpy(p.name, pName.c_str(), n);
-            // p.status = pStatus;
-            n = pStatus.size();
-            // printf("updatePrinterList printer pStatus size:%d\n", n);
-            memset(p.pStatus, 0, n+1);
-            memcpy(p.pStatus, pStatus.c_str(), n);
-            p.jobCount = jobCount;
+            // DWORD n = pName.size();
+            // memset(p.name, 0, n+1);
+            // memcpy(p.name, pName.c_str(), n);
+            // n = pStatus.size();
+            // memset(p.pStatus, 0, n+1);
+            // memcpy(p.pStatus, pStatus.c_str(), n);
+            // p.jobCount = jobCount;
 
+           
+           /*
             printerList.emplace(printerList.begin(), p);
-            /**/
-            // std::string v = wstring_to_string(spPrinterName);
-            // jobCount = pPrinterInfo->cJobs;
-            // std::wstring printName(pPrinterInfo->pPrinterName);// = pPrinterInfo->pPrinterName;
-            // p.name = Printer::wstring_to_string(printName);
-            // p.status = format_printer_status(pPrinterInfo->Status);
-            
+            */
             if (i>=0){
                 updateTaskList(spPrinterName, jobCount, showJobs);
             }
+            
             // printerList.insert(v);
             pTmpBuffer += sizeof(pInfo);
         }
     }
-    delete []pBuffer;
+    delete pBuffer;
 }
-
-std::string Printer::printerListJson(BOOL showJobs) {
+std::string Printer::printerListJsonNew(BOOL showJobs) {
     Document d;
     d.SetObject();
     Document::AllocatorType& allocator = d.GetAllocator();
     Value printers(kArrayType);
-    for(PrinterProb elem : printerList){
-        // Value pn(kStringType);
-        // pn.SetString(StringRef(elem.c_str()),allocator);
-        // const std::wstring o = elem;
-        // std::string v = wstring_to_string(o)
-        
-        Value printer(kObjectType);
+    if(printermap.size()>0){
+        for(auto& it : printermap){
+            UniPrinterProb elem = it.second;
+            Value printer(kObjectType);
+            std::string printerName(elem.name);
+            printer.AddMember("isLocal", elem.isLocal, allocator);
+            printer.AddMember("isShared", elem.isShared, allocator);
+            printer.AddMember("isNetwork", elem.isNetwork, allocator);
+            printer.AddMember("supportColor", elem.supportColor, allocator);
+            printer.AddMember("supportDuplex", elem.supportDuplex, allocator);
 
-        std::string printerName(elem.name);
-        // std::string printerStatus = elem.status;
-        
-        // uint16_t isLocal = elem.isLocal;
-        // uint16_t isShared = elem.isShared;
-        // uint16_t isNetwork = elem.isNetwork;
-
-        // std::string portName = elem.portName;
-
-        printer.AddMember("isLocal", elem.isLocal, allocator);
-        printer.AddMember("isShared", elem.isShared, allocator);
-        printer.AddMember("isNetwork", elem.isNetwork, allocator);
-        printer.AddMember("supportColor", elem.supportColor, allocator);
-        const char* key = printerName.c_str();
-        // const char* _status = printerStatus.c_str();
-        // const char* _portName = portName.c_str();
-        
-        Value pName(elem.name, allocator);
-        printer.AddMember(StringRef("name"), pName.Move(), allocator);
-        //printf("printer status:%s\n", elem.pStatus);
-        Value pStatus(elem.pStatus, allocator);
-        printer.AddMember(StringRef("status"), pStatus.Move(), allocator);
-
-        // Value pPort(_portName, allocator);
-        // printer.AddMember(StringRef("portName"), pPort.Move(), allocator);
-        /**/
-        if (showJobs) 
-        {
-            std::map<std::string, std::vector<PJob>*>::iterator _iter = printerJobs.find(key);
-            if (_iter != printerJobs.end())
+            const char* key = printerName.c_str();
+            Value pName(elem.name, allocator);
+            printer.AddMember(StringRef("name"), pName.Move(), allocator);
+            Value pStatus(elem.pStatus, allocator);
+            printer.AddMember(StringRef("status"), pStatus.Move(), allocator);
+            Value pPort(elem.pPort, allocator);
+            printer.AddMember(StringRef("pPort"), pPort.Move(), allocator);
+            if (showJobs) 
             {
-                // printf("find job objects in......key:%s\n", key);
-                
-                Value json_jobs(kArrayType);
-                
-                std::vector<PJob>* jobs = _iter->second;
-                auto iter=jobs->begin();
-                for(iter;iter!=jobs->end();++iter)
+                std::map<std::string, std::vector<PJob>*>::iterator _iter = printerJobs.find(key);
+                if (_iter != printerJobs.end())
                 {
-                    PJob job = *iter;
-                    //printf("find job objects jobId:%d\n", job.jobId);
-                    
-                    Value json_job(kObjectType);
-                    
-                    // uint64_t _jobId = job.jobId;
-                    json_job.AddMember("id", job.jobId, allocator);
-                    //Value doc(job.docName.c_str(), allocator);
-					Value doc(job.docName, allocator);
-                    json_job.AddMember(StringRef("doc"), doc.Move(), allocator);
-                    //Value _status(job.status.c_str(), allocator);
-					Value _status(job.status, allocator);
-                    json_job.AddMember(StringRef("status"), _status.Move(), allocator);
-                    // uint64_t _size = job.size;
-                    json_job.AddMember("size", job.size, allocator);
-                    // uint64_t _priority = job.priority;
-                    json_job.AddMember("priority", job.priority, allocator);
-                    // uint64_t _pagesPrinted = job.pagesPrinted;
-                    json_job.AddMember("pagesPrinted", job.pagesPrinted, allocator);
-                    // uint64_t _totalPages = job.totalPages;
-                    json_job.AddMember("totalPages", job.totalPages, allocator);
-                    
-                    json_jobs.PushBack(json_job.Move(),allocator);
-                    
+                    Value json_jobs(kArrayType);
+                
+                    std::vector<PJob>* jobs = _iter->second;
+                    auto iter=jobs->begin();
+                    for(iter;iter!=jobs->end();++iter)
+                    {
+                        PJob job = *iter;
+                        Value json_job(kObjectType);
+                        // uint64_t _jobId = job.jobId;
+                        json_job.AddMember("id", job.jobId, allocator);
+                        //Value doc(job.docName.c_str(), allocator);
+                        Value doc(job.docName, allocator);
+                        
+                        json_job.AddMember(StringRef("doc"), doc.Move(), allocator);
+
+                        Value pStatus(job.printStatus, allocator);
+                        json_job.AddMember(StringRef("pstatus"), pStatus.Move(), allocator);
+                        //Value _status(job.status.c_str(), allocator);
+                        Value _status(job.status, allocator);
+                        json_job.AddMember(StringRef("status"), _status.Move(), allocator);
+                        // uint64_t _size = job.size;
+                        json_job.AddMember("size", job.size, allocator);
+                        // uint64_t _priority = job.priority;
+                        json_job.AddMember("priority", job.priority, allocator);
+                        // uint64_t _pagesPrinted = job.pagesPrinted;
+                        json_job.AddMember("pagesPrinted", job.pagesPrinted, allocator);
+                        // uint64_t _totalPages = job.totalPages;
+                        json_job.AddMember("totalPages", job.totalPages, allocator);
+                        
+                        json_jobs.PushBack(json_job.Move(),allocator);
+                    }
+                    printer.AddMember(StringRef("jobs"), json_jobs.Move(), allocator);
                 }
-                
-                printer.AddMember(StringRef("jobs"), json_jobs.Move(), allocator);
-                
             }
+            printers.PushBack(printer.Move(), allocator);
         }
-        printers.PushBack(printer.Move(), allocator);
+        d.AddMember("printers", printers.Move(), allocator);
         
     }
-    d.AddMember("printers", printers.Move(), allocator);
     StringBuffer buffer;
     // Writer<StringBuffer, ANSI, UTF8, CrtAllocator, kWriteDefaultFlags> writer(buffer);
     Writer<StringBuffer> writer(buffer);
     d.Accept(writer);
-    // jsonSize = buffer.GetSize();
-    // jsonSize = buffer.GetLength();
-
-    // std::string rs = UTF8_To_string(buffer.GetString(), buffer.GetLength());
-    // return rs;
-    // printf("printerListJson GetString:%s\n", buffer.GetString());
     return std::string(buffer.GetString());
 }
+// std::string Printer::printerListJson(BOOL showJobs) {
+//     Document d;
+//     d.SetObject();
+//     Document::AllocatorType& allocator = d.GetAllocator();
+//     Value printers(kArrayType);
+
+//     for(PrinterProb elem : printerList){
+//         // Value pn(kStringType);
+//         // pn.SetString(StringRef(elem.c_str()),allocator);
+//         // const std::wstring o = elem;
+//         // std::string v = wstring_to_string(o)
+        
+//         Value printer(kObjectType);
+
+//         std::string printerName(elem.name);
+//         // std::string printerStatus = elem.status;
+        
+//         // uint16_t isLocal = elem.isLocal;
+//         // uint16_t isShared = elem.isShared;
+//         // uint16_t isNetwork = elem.isNetwork;
+
+//         // std::string portName = elem.portName;
+
+//         printer.AddMember("isLocal", elem.isLocal, allocator);
+//         printer.AddMember("isShared", elem.isShared, allocator);
+//         printer.AddMember("isNetwork", elem.isNetwork, allocator);
+//         printer.AddMember("supportColor", elem.supportColor, allocator);
+//         const char* key = printerName.c_str();
+//         // const char* _status = printerStatus.c_str();
+//         // const char* _portName = portName.c_str();
+        
+//         Value pName(elem.name, allocator);
+//         printer.AddMember(StringRef("name"), pName.Move(), allocator);
+//         //printf("printer status:%s\n", elem.pStatus);
+//         Value pStatus(elem.pStatus, allocator);
+//         printer.AddMember(StringRef("status"), pStatus.Move(), allocator);
+
+//         // Value pPort(_portName, allocator);
+//         // printer.AddMember(StringRef("portName"), pPort.Move(), allocator);
+//         /**/
+//         if (showJobs) 
+//         {
+//             std::map<std::string, std::vector<PJob>*>::iterator _iter = printerJobs.find(key);
+//             if (_iter != printerJobs.end())
+//             {
+//                 // printf("find job objects in......key:%s\n", key);
+                
+//                 Value json_jobs(kArrayType);
+                
+//                 std::vector<PJob>* jobs = _iter->second;
+//                 auto iter=jobs->begin();
+//                 for(iter;iter!=jobs->end();++iter)
+//                 {
+//                     PJob job = *iter;
+//                     //printf("find job objects jobId:%d\n", job.jobId);
+                    
+//                     Value json_job(kObjectType);
+                    
+//                     // uint64_t _jobId = job.jobId;
+//                     json_job.AddMember("id", job.jobId, allocator);
+//                     //Value doc(job.docName.c_str(), allocator);
+// 					Value doc(job.docName, allocator);
+//                     json_job.AddMember(StringRef("doc"), doc.Move(), allocator);
+//                     //Value _status(job.status.c_str(), allocator);
+// 					Value _status(job.status, allocator);
+//                     json_job.AddMember(StringRef("status"), _status.Move(), allocator);
+//                     // uint64_t _size = job.size;
+//                     json_job.AddMember("size", job.size, allocator);
+//                     // uint64_t _priority = job.priority;
+//                     json_job.AddMember("priority", job.priority, allocator);
+//                     // uint64_t _pagesPrinted = job.pagesPrinted;
+//                     json_job.AddMember("pagesPrinted", job.pagesPrinted, allocator);
+//                     // uint64_t _totalPages = job.totalPages;
+//                     json_job.AddMember("totalPages", job.totalPages, allocator);
+                    
+//                     json_jobs.PushBack(json_job.Move(),allocator);
+                    
+//                 }
+                
+//                 printer.AddMember(StringRef("jobs"), json_jobs.Move(), allocator);
+                
+//             }
+//         }
+//         printers.PushBack(printer.Move(), allocator);
+        
+//     }
+//     d.AddMember("printers", printers.Move(), allocator);
+//     StringBuffer buffer;
+//     // Writer<StringBuffer, ANSI, UTF8, CrtAllocator, kWriteDefaultFlags> writer(buffer);
+//     Writer<StringBuffer> writer(buffer);
+//     d.Accept(writer);
+//     // jsonSize = buffer.GetSize();
+//     // jsonSize = buffer.GetLength();
+
+//     // std::string rs = UTF8_To_string(buffer.GetString(), buffer.GetLength());
+//     // return rs;
+//     // printf("printerListJson GetString:%s\n", buffer.GetString());
+//     return std::string(buffer.GetString());
+// }
 
 int Printer::checkPrinter(std::wstring printerName) {
     int ret = 0;
@@ -782,37 +957,7 @@ BOOL Printer::queryJobs(HANDLE hPrinter,/* Handle to the printer. */
     // PRINTER_INFO_2W *pPrinterInfo = NULL;
     BYTE *pBuffer;
     int i;
-    // if (!GetPrinterW(hPrinter, 2, NULL, 0, &cByteNeeded))
-    // {
-    //     if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-    //         return FALSE;
-    // }
-    // pPrinterInfo = (PRINTER_INFO_2W *)malloc(cByteNeeded);
-    // if (!pPrinterInfo){
-    //     // Failure to allocate memory.
-    //     return FALSE;
-    // }
-    // if (!GetPrinterW(hPrinter, 2, (LPBYTE)pPrinterInfo, cByteNeeded, &cByteUsed))
-    // {
-    //     // Failure to access the printer.
-    //     free(pPrinterInfo);
-    //     pPrinterInfo = NULL;
-    //     return FALSE;
-    // }
-    // jobCount = pPrinterInfo->cJobs;
-    // *printerJobCount = jobCount;
-    // std::wstring printName(pPrinterInfo->pPrinterName);// = pPrinterInfo->pPrinterName;
-    // std::string printerName = Printer::wstring_to_string(printName);
-    // bool isgbk = isGBK(v.c_str(), v.size());
-    // bool isurf8 = isUtf8(v.c_str(), v.size());
-    // if (isgbk && isurf8) {
-    //     v = GBKToUTF8(v);
-    // }
-    // printf("queryJobs pPrinterInfo.pPrinterName :%s\n,isgbk:%d\n,isurf8:%d\n", v.c_str(), isgbk, isurf8);
-    // printf("queryJobs pPrinterInfo.pPrinterName:%s\n, jobs:%d\n", printerName.c_str(), jobCount);
-
-    //EnumPrintersW(PRINTER_ENUM_LOCAL, NULL, level, NULL, 0, &dwNeed, &dwRet);
-    
+    std::vector<PJob> jobs_temp_list;
     if (!EnumJobsW(hPrinter, 0, jobCount, 2, NULL, 0, &cByteNeeded, &nReturned))
     {
         //unsigned long err = GetLastError();
@@ -851,6 +996,7 @@ BOOL Printer::queryJobs(HANDLE hPrinter,/* Handle to the printer. */
         // std::string stat = lpwstr_to_string(jobInfo.pStatus);
         // printf("queryJobs stat:%s\n", stat.c_str());
         jobStatus = jobInfo.Status;
+        
         std::string jobStatusStr = format_job_status(jobStatus);
         priority = jobInfo.Priority;
         totalPages = jobInfo.TotalPages;
@@ -866,11 +1012,18 @@ BOOL Printer::queryJobs(HANDLE hPrinter,/* Handle to the printer. */
 		DWORD n = jobStatusStr.size();
 		memset(job.status, 0, n+1);
 		memcpy(job.status, jobStatusStr.c_str(), n);
+        if(jobInfo.pStatus){
+            std::string printStatus = lpwstr_to_string(jobInfo.pStatus);
+            n = printStatus.size();
+            memcpy(job.printStatus, printStatus.c_str(), n);
+        }
+        
 		n = doc.size();
         //job.docName = doc;
 		memset(job.docName, 0, n+1);
 		memcpy(job.docName, doc.c_str(), n);
-        AddJobInfo(printerName, job);
+        jobs_temp_list.push_back(job);
+        // AddJobInfo(printerName, job);
         // printf("queryJobs jobStatus:%d\n,priority:%d\n,totalPages:%ld\n,size:%ld\n,pagesPrinted:%d\n", jobStatus, priority, totalPages, size, pagesPrinted);
         // printf("queryJobs jobStatusStr:%s\n", jobStatusStr.c_str());
 
@@ -879,7 +1032,8 @@ BOOL Printer::queryJobs(HANDLE hPrinter,/* Handle to the printer. */
     if (_pJobStorage!=NULL){
         free(_pJobStorage);
     }
-    
+    // printf("jobs_temp_list size:%d.\n", jobs_temp_list.size());
+    UpdateJobsInfo(printerName, jobs_temp_list);
     // if (!pPrinterInfo == NULL) {
     //     *pStatus = pPrinterInfo->Status;
     //     free(pPrinterInfo);
@@ -987,42 +1141,238 @@ BOOL Printer::deleteJob(HANDLE hPrinter, DWORD jobId)
     }
     return TRUE;
 }
-void Printer::AddJobInfo(const std::string& key, const PJob& job){
+void Printer::UpdateJobsInfo(const std::string& key, std::vector<PJob>& jobs_temp_list){
     bool exist = false;
-    
-    // for(auto& it : printerJobs){
-    //     if(it !=NULL && it.first == key){
-    //         it.second = job.docName;
-    //         exist = true;
-    //         break;
-    //     }
-    // }
-    // std::map<std::string, PJob>::iterator iter = printerJobs.find(key.c_str());
-    // std::map<std::string, std::string>::iterator iter = printerJobs.find(key.c_str());
-    const char* _key = key.c_str();
-    PJob _job = job;
-    std::map<std::string, std::vector<PJob>*>::iterator iter = printerJobs.find(_key);
-    if (iter != printerJobs.end())
-    {
-        std::vector<PJob>* jobs = iter->second;
-        // iter->second = job;
-        // auto job = iter->second;
-        jobs->push_back(job);
-        // printf("printerListJson job=> docName:%s\n", job.docName.c_str());
-    } else {
-        std::vector<PJob> *_jobs = new std::vector<PJob>();
-        
-        _jobs->push_back(job);
-        printerJobs.emplace(std::pair<const std::string, std::vector<PJob>*>(key, _jobs));
-    }
+    size_t n;
+    if(jobs_temp_list.size()>0){
+        const char* _key = key.c_str();
+        std::map<std::string, std::vector<PJob>*>::iterator iter = printerJobs.find(_key);
+        if (iter != printerJobs.end())
+        {
+            std::map<uint32_t, PJob*> old_job_id_map;
+            // std::map<uint32_t, PJob> dirty_job_id_set;
 
-    // printf("AddJobInfo key:%s\n", _key);
-    
-    // if (!exist) {
-    //     printerJobs.emplace(std::pair<const std::string, PJob>(key, job));
-    //     // printerJobs.emplace(key, job);
-    // }
+            std::vector<PJob>* jobs = iter->second;
+            auto job_iter=jobs->begin();
+            for(job_iter;job_iter!=jobs->end();++job_iter)
+            {
+                PJob& job = *job_iter;
+                //printf("UpdateJobsInfo old jobId:%d.\n", job.jobId);
+                old_job_id_map.emplace(std::pair<const uint32_t, PJob*>(job.jobId, &job));
+            }
+            std::vector<PJob>::iterator new_iter=jobs_temp_list.begin();
+            for(new_iter;new_iter!=jobs_temp_list.end();++new_iter)
+            {
+                PJob job = *new_iter;
+                //printf("UpdateJobsInfo new job jobId:%d.\n", job.jobId);
+                std::map<uint32_t, PJob*>::iterator old_iter = old_job_id_map.find(job.jobId);
+                if(old_iter!=old_job_id_map.end()){
+                    PJob* old_job = old_iter->second;
+                    old_job->priority = job.priority;
+                    old_job->totalPages = job.totalPages;
+                    old_job->pagesPrinted = job.pagesPrinted;
+                    std::string _s(job.status);
+                    n = _s.size();
+                    //printf("UpdateJobsInfo new job match jobId ok:%d.\n=>status n:%d.\n,status:%s.\n", job.jobId, n, _s.c_str());
+                    memset(old_job->status, 0, n+1);
+                    if(n>0){
+                        memcpy(old_job->status, job.status, n);
+                    }
+                    std::string _ps(job.printStatus);
+                    n = _ps.size();
+                    memset(old_job->printStatus, 0, n+1);
+                    if(n>0){
+                        memcpy(old_job->printStatus, job.printStatus, n);
+                    }
+                    old_job_id_map.erase(old_iter);
+                } else {
+                    jobs->push_back(job);
+                }
+            }
+            if(old_job_id_map.size()>0){
+                std::map<uint32_t, PJob*>::iterator old_iter = old_job_id_map.begin();
+                for(old_iter;old_iter!=old_job_id_map.end();++old_iter){
+                    uint32_t jobId = old_iter->first;
+                    BOOL find = FALSE;
+                    auto dirty_iter=jobs->begin();
+                    for(dirty_iter;dirty_iter!=jobs->end();++iter)
+                    {
+                        PJob& job = *dirty_iter;
+                        if(job.jobId == jobId){
+                            find = TRUE;
+                            break;
+                        }
+                    }
+                    if(find){
+                        jobs->erase(dirty_iter);
+                    }
+                }
+            }
+
+        } else {
+            std::vector<PJob> *_jobs = new std::vector<PJob>();
+            auto iter=jobs_temp_list.begin();
+            for(iter;iter!=jobs_temp_list.end();++iter)
+            {
+                PJob job = *iter;
+                _jobs->push_back(job);
+            }
+            
+            printerJobs.emplace(std::pair<const std::string, std::vector<PJob>*>(key, _jobs));
+        }
+    }
 }
+
+BOOL Printer::printPostscript(const std::string& printerName, const std::string& psPath, const std::string& docName, std::vector<int>& range)
+{
+    size_t n,i;
+    DWORD dwBytesWritten=0L, len=0L;
+    DWORD ret = 0;
+    DWORD errorCode;
+    DEVMODEW dm;
+
+    char * driver;
+    char * pPort;
+
+    HANDLE hPrinter = NULL;
+    DOC_INFO_1W di;
+    std::wstring pn = Printer::string_to_wstring(printerName);
+    // std::wstring postscriptPath = Printer::string_to_wstring(psPath);
+    std::wstring wDocName = Printer::string_to_wstring(docName);
+    LPWSTR pPrinterName = (LPWSTR)pn.c_str();
+    std::map<std::string, UniPrinterProb>::iterator printer_iter = printermap.find(printerName.c_str());
+    if(printer_iter==printermap.end()){
+        return FALSE;
+    }
+    UniPrinterProb& p = printer_iter->second;
+    printf("printPostscript UniPrinterProb name:%s.\n", p.name);
+    printf("printPostscript UniPrinterProb supportDuplex:%d.\n", p.supportDuplex);
+
+    std::wstring xps_type(L"XPS_PASS");
+    std::wstring raw_type(L"RAW");
+    di.pDatatype = IsV4Driver(pPrinterName)?(LPWSTR)xps_type.c_str():(LPWSTR)raw_type.c_str();
+    n = docName.length();
+    di.pDocName = (LPWSTR)wDocName.c_str();
+    di.pOutputFile = NULL;
+    
+    std::string pdt = wstring_to_string(std::wstring(di.pDatatype));
+    std::string pdn = wstring_to_string(std::wstring(di.pDocName));
+    printf("printPostscript dataType:%s.\n", pdt.c_str());
+    printf("printPostscript pDocName:%s.\n", pdn.c_str());
+    printf("printPostscript docName:%s.\n", docName.c_str());
+
+    // write to file.
+    /*
+    std::ofstream writeBinFile;
+    writeBinFile.open("./save_ps.ps", std::ios::out|std::ios::binary);
+    writeBinFile.write(buff, len);
+    writeBinFile.close();
+    delete []buff;
+    */
+   /*
+    WCHAR driverbuf[512];
+    GetProfileStringW(L"Devices", pPrinterName, L"", driverbuf, sizeof(driverbuf));
+    std::wstring driverInfo(driverbuf);
+    std::string driver_info = wstring_to_string(std::wstring(driverInfo));
+    printf("printPostscript driver_info:%s.\n", driver_info.c_str());
+    char* driver_buff = (char *)driver_info.c_str();
+    char* cache_ptr;
+    driver = strtok_s(driver_buff, ",", &cache_ptr);
+    pPort = strtok_s(NULL, ",", &cache_ptr);
+    printf("printPostscript pPort:%s.\n", pPort);
+    printf("printPostscript driver:%s.\n", driver);
+
+    std::wstring _wpPort = Printer::string_to_wstring(pPort);
+    LPWSTR wpPort = (LPWSTR)_wpPort.c_str();
+    BOOL duplex_capability = FALSE;
+    if (DeviceCapabilitiesW(pPrinterName, wpPort, DC_DUPLEX, NULL, NULL)) {
+        duplex_capability = TRUE;
+    }
+    printf("printPostscript duplex_capability:%d.\n", duplex_capability);
+    */
+    /*
+    if(OpenPrinterW(pPrinterName, &hPrinter, NULL)){
+        
+        ret = StartDocPrinterW(hPrinter, 1, (LPBYTE)&di);
+        if (ret == 0) {
+            errorCode = GetLastError();
+            printf("StartDocPrinterW failed,errorCode:%ld.\n", errorCode);
+            // delete []buff;
+            ClosePrinter(hPrinter);
+            return FALSE;
+        }
+        n = range.size();
+        for(i=0;i<n;i++){
+            int sec_idx = range[i];
+            // printf("StartDocPrinterW range:%d.\n", sec_idx);
+            std::string pageName = docName+"_"+std::to_string(sec_idx)+".ps";
+            std::string filePath = psPath + pageName;
+            printf("StartDocPrinterW filePath:%s.\n", filePath.c_str());
+            
+            FILE * pfin = fopen(filePath.c_str(), "rb");
+            if(!pfin){
+                printf("Postscript page file:%s not exist.\n", filePath.c_str());
+                return FALSE;
+            }
+            fseek(pfin, 0L, SEEK_END);
+            len = ftell(pfin);
+            if(len == -1){
+                printf("Postscript page file can not read file size.\n");
+                return FALSE;
+            }
+            printf("printPostscript page file size:%lld.\n", len);
+            
+            fseek(pfin, 0L, SEEK_SET);
+            char* buff=new char[len];
+            fread( buff, len, 1, pfin );
+            fclose(pfin);
+            ret = StartPagePrinter(hPrinter);
+            if(!ret){
+                printf("StartPagePrinter failed.\n");
+                delete []buff;
+                EndDocPrinter(hPrinter);
+                ClosePrinter(hPrinter);
+                return FALSE;
+            }
+            if(!WritePrinter(hPrinter, buff, len, &dwBytesWritten)){
+                printf("WritePrinter failed.\n");
+                delete []buff;
+                EndDocPrinter(hPrinter);
+                ClosePrinter(hPrinter);
+                EndPagePrinter(hPrinter);
+                return FALSE;
+            } else {
+                if(dwBytesWritten == len){
+                    printf("Postscript file send ok.\n");
+                }
+            }
+            if (!EndPagePrinter(hPrinter)) {
+                printf("EndPagePrinter failed.\n");
+                delete []buff;
+                EndDocPrinter(hPrinter);
+                ClosePrinter(hPrinter);
+                return FALSE;
+            }
+            delete []buff;
+            
+        }
+
+        if (!EndDocPrinter(hPrinter)) {
+            printf("EndDocPrinter failed.\n");
+            //delete []buff;
+            ClosePrinter(hPrinter);
+            return FALSE;
+        }
+        //delete []buff;
+        ClosePrinter(hPrinter);
+    } else {
+        //delete []buff;
+		printf("printPostscript can not  OpenPrinterW %s.\n", printerName.c_str());
+	}
+    */
+    return FALSE;
+}
+
 // BOOL Printer::IsPrinterError(HANDLE hPrinter)
 // {
 //     JOB_INFO_2W  *pJobs;

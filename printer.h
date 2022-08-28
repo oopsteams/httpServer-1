@@ -30,34 +30,37 @@ struct PJob{
     uint32_t totalPages;
     uint32_t pagesPrinted;
     char status[32];
+    char printStatus[64];
     char docName[200];
 };
-struct PrinterProb{
+struct UniPrinterProb{
     uint32_t jobCount;
     uint8_t isLocal;
     uint8_t isShared;
     uint8_t isNetwork;
-    // uint8_t supportDuplex;
+    uint8_t supportDuplex;
     uint8_t supportColor;
     // std::string status;
     char pStatus[32];
     char name[64];
-    // char portName[128];
+    char pPort[64];
 };
 
 class Printer{
 public:
-    Printer(std::map<std::string, std::vector<PJob>*> printerJobs, std::vector<PrinterProb> printerList);
+    // , std::map<std::string, UniPrinterProb> printermap
+    Printer(std::map<std::string, std::vector<PJob>*> printerJobs);
     
     int jsonSize;
     int errorCode;
-    void AddJobInfo(const std::string& key, const PJob& job);
+    // void AddJobInfo(const std::string& key, const PJob& job);
     // int print(std::string printerName, std::string docName, LPBYTE lpData);
     // int print(std::string printerName, std::string docName, std::string imagePath, DWORD dwCount);
     void updatePrinterList(BOOL showJobs);
     BOOL updateTaskList(const std::wstring& printerName, DWORD jobCount, BOOL showJobs);
     // const char* printerListJson2();
     std::string printerListJson(BOOL showJobs);
+    std::string printerListJsonNew(BOOL showJobs);
     int checkPrinter(std::wstring printerName);
     std::wstring getDefaultPrinterName();
     // void jpeg2bmp(std::string filePath);
@@ -72,16 +75,20 @@ public:
     BOOL pauseJob(HANDLE hPrinter, DWORD jobId);
     BOOL resumeJob(HANDLE hPrinter, DWORD jobId);
     BOOL deleteJob(HANDLE hPrinter, DWORD jobId);
+    BOOL printPostscript(const std::string& printerName, const std::string& psPath, const std::string& docName, std::vector<int>& range);
     void clearCache();
-    virtual ~Printer(){};
+    virtual ~Printer(){clearCache();};
 
     static std::string wstring_to_string(const std::wstring& input);
     static std::wstring string_to_wstring(const std::string& input);
 private:
     int ByteAlign( int nBits );
     // BOOL IsPrinterError(HANDLE hPrinter);
-    std::vector<PrinterProb> printerList;
+    std::vector<String> parseSections;
+    // std::vector<UniPrinterProb> printerList;
     std::map<std::string, std::vector<PJob>*> printerJobs;
+    std::map<std::string, UniPrinterProb> printermap;
+    void UpdateJobsInfo(const std::string& key, std::vector<PJob>& jobs_temp_list);
     // void write_bmp_header(j_decompress_ptr cinfo, FILE *output_file);
     // void write_bmp_data(j_decompress_ptr cinfo,unsigned char *src_buff, FILE *output_file);
 };

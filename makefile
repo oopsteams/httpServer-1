@@ -28,8 +28,8 @@ rc:
 clean:
 	rm *.o 
 
-checkprinter: checkprinter.o printer.o error.o TimeUtils.o
-	$(CC) -o cprinter checkprinter.o printer.o TimeUtils.o -lGdi32 -lwinspool
+checkprinter: checkprinter.o printer.o error.o TimeUtils.o rc
+	$(CC) -o cprinter checkprinter.o printer.o TimeUtils.o resource.o -lGdi32 -lwinspool
 
 checkprinter.o: checkprinter.cpp
 	$(CC) -Wall -c -g -DWIN32 -lGdi32 -lwinspool -I ./include checkprinter.cpp
